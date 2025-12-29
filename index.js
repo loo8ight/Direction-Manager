@@ -78,7 +78,12 @@ function applyPlaceholderToSystem(placeholder) {
         registerCustomPlaceholder(placeholder.key, settings.content);
     } else {
         // 사전등록된 플레이스홀더는 값 대체
-        replaceSystemPlaceholder(placeholder.key, settings.content);
+        // 내용이 비어있으면 기존 시스템 값을 유지 (마치 비활성화된 것처럼 동작)
+        if (settings.content && settings.content.trim() !== '') {
+            replaceSystemPlaceholder(placeholder.key, settings.content);
+        } else {
+            restoreSystemPlaceholder(placeholder.key);
+        }
     }
 }
 
