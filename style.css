@@ -42,15 +42,15 @@ div.dm-compact--button.dm-compact--directionOn.dm-compact--impersonateOn,
 div.dm-compact--button.dm-compact--impersonateOn:hover,
 body.st-custom-theme-active #send_form .dm-compact--button.menu_button.dm-compact--impersonateOn,
 body.st-custom-theme-active #send_form .dm-compact--button.menu_button.dm-compact--impersonateOn:hover {
-    color: var(--SmartThemeQuoteColor, #68a5d8) !important;
-    background-color: var(--white20a, rgba(104, 165, 216, 0.14)) !important;
-    border-color: var(--SmartThemeQuoteColor, #68a5d8) !important;
-    box-shadow: inset 0 0 0 1px var(--SmartThemeQuoteColor, #68a5d8) !important;
+    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
+    background-color: var(--SmartThemeBodyColor, #505050) !important;
+    border-color: var(--SmartThemeBodyColor, #505050) !important;
+    box-shadow: none !important;
 }
 
 .dm-compact--button.dm-compact--impersonateOn > i,
 body.st-custom-theme-active #send_form .dm-compact--button.menu_button.dm-compact--impersonateOn > i {
-    color: var(--SmartThemeQuoteColor, #68a5d8) !important;
+    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
 }
 
 .dm-compact--button.menu_button.dm-compact--directionOn,

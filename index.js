@@ -734,12 +734,7 @@ function setupCompactUIEventListeners() {
         setActiveScope($(this).data('scope'));
     });
 
-    compactUIPopup.find('.dm-impersonate-btn').on('click', function() {
-        const settings = extension_settings[extensionName];
-        settings.impersonateMode = !settings.impersonateMode;
-        syncCompactUIPopup();
-        saveSettingsDebounced();
-    });
+    compactUIPopup.find('.dm-impersonate-btn').on('click', toggleImpersonateMode);
 
     compactUIPopup.find('.dm-swap-btn').on('click', function() {
         const scope = getActiveScope();
@@ -891,6 +886,34 @@ function addCompactUIButton() {
 }
 
 let impersonateRequestInFlight = false;
+
+function toggleImpersonateMode() {
+    const settings = extension_settings[extensionName];
+    if (!settings) {
+        return false;
+    }
+
+    settings.impersonateMode = !settings.impersonateMode;
+    syncCompactUIPopup();
+    saveSettingsDebounced();
+    return settings.impersonateMode;
+}
+
+function handleImpersonateHotkey(event) {
+    const isAltE = event.altKey
+        && !event.ctrlKey
+        && !event.metaKey
+        && (event.code === 'KeyE' || String(event.key).toLowerCase() === 'e');
+
+    if (!isAltE) {
+        return;
+    }
+
+    // Consume WriteSupporter's legacy Alt+E popup shortcut in the capture phase.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    toggleImpersonateMode();
+}
 
 function isImpersonateModeEnabled() {
     const settings = extension_settings[extensionName];
@@ -1138,6 +1161,7 @@ jQuery(async () => {
     addCompactUIButton();
 
     // 대필 모드에서는 일반 메시지 전송보다 먼저 보내기 클릭을 가로챈다.
+    document.addEventListener('keydown', handleImpersonateHotkey, true);
     document.addEventListener('click', handleImpersonateSendCapture, true);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
