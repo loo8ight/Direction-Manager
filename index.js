@@ -1,11 +1,10 @@
 // Direction-Manager 확장 - 3개 고정 플레이스홀더 관리 (컴팩트 UI 전용)
-import { extension_settings, getContext } from "../../../extensions.js";
+import { extension_settings, getContext, saveMetadataDebounced } from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types } from "../../../../script.js";
 
 // 확장 설정
 const extensionName = "Direction-Manager";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-const extensionSettings = extension_settings[extensionName];
 // 기본 Direction 프롬프트
 const DEFAULT_DIRECTION_PROMPT = `<direction>
 - Resume the story based on the director's instructions below.
@@ -15,7 +14,7 @@ const DEFAULT_DIRECTION_PROMPT = `<direction>
 [Direction(If blank, develop the story as you see fit): {{direction}}]
 </direction>`;
 
-const defaultSettings = {
+const PLACEHOLDER_DEFAULTS = {
     direction: {
         enabled: false,
         content: ""
@@ -27,11 +26,18 @@ const defaultSettings = {
     user: {
         enabled: false,
         content: ""
-    },
+    }
+};
+
+const defaultSettings = {
     // 확장 메뉴 설정
     extensionEnabled: true,
     directionPrompt: DEFAULT_DIRECTION_PROMPT,
-    promptDepth: 1  // 0: Chat History 끝에 삽입, >0: 끝에서부터 N번째 위치에 삽입
+    promptDepth: 1,  // 0: Chat History 끝에 삽입, >0: 끝에서부터 N번째 위치에 삽입
+    activeScope: 'chat',
+    impersonateMode: false,
+    globalSwapCharUser: false,
+    legacyGlobalPlaceholdersMigrated: false
 };
 
 // 현재 선택된 플레이스홀더 인덱스
@@ -44,6 +50,371 @@ const placeholders = [
     { key: 'user', name: '{{user}}', isCustom: false }
 ];
 
+const compactPages = [
+    { key: 'direction', title: '{{direction}}', type: 'single', placeholderKey: 'direction' },
+    { key: 'name', title: '{{name}}', type: 'names' },
+];
+
+const CHAT_METADATA_KEY = 'directionManager';
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[char]);
+}
+
+function clonePlaceholderState(source = PLACEHOLDER_DEFAULTS) {
+    return placeholders.reduce((result, { key }) => {
+        const value = source?.[key] || PLACEHOLDER_DEFAULTS[key];
+        result[key] = {
+            enabled: Boolean(value.enabled),
+            content: String(value.content ?? '')
+        };
+        return result;
+    }, {});
+}
+
+function ensurePlaceholderEntry(container, key, fallback = PLACEHOLDER_DEFAULTS[key]) {
+    if (!container[key] || typeof container[key] !== 'object') {
+        container[key] = { ...fallback };
+    }
+
+    container[key].enabled = Boolean(container[key].enabled);
+    container[key].content = String(container[key].content ?? '');
+    return container[key];
+}
+
+function normalizeScope(scope) {
+    return scope === 'global' ? 'global' : 'chat';
+}
+
+function hasPlaceholderValues(source) {
+    if (!source || typeof source !== 'object') {
+        return false;
+    }
+
+    return placeholders.some(({ key }) => {
+        const value = source[key];
+        return Boolean(value?.enabled) || String(value?.content ?? '').trim() !== '';
+    });
+}
+
+function getActiveScope() {
+    return normalizeScope(extension_settings[extensionName]?.activeScope);
+}
+
+function getGlobalPlaceholderStore() {
+    const settings = extension_settings[extensionName];
+    if (!settings.globalPlaceholders || typeof settings.globalPlaceholders !== 'object') {
+        settings.globalPlaceholders = clonePlaceholderState();
+    }
+
+    placeholders.forEach(({ key }) => ensurePlaceholderEntry(settings.globalPlaceholders, key));
+    return settings.globalPlaceholders;
+}
+
+function getChatMetadataRoot(create = false) {
+    const context = getContext();
+    if (!context) {
+        return null;
+    }
+
+    if (!context.chatMetadata || typeof context.chatMetadata !== 'object') {
+        if (!create) {
+            return null;
+        }
+        context.chatMetadata = {};
+    }
+
+    if (!context.chatMetadata[CHAT_METADATA_KEY] || typeof context.chatMetadata[CHAT_METADATA_KEY] !== 'object') {
+        if (!create) {
+            return null;
+        }
+        context.chatMetadata[CHAT_METADATA_KEY] = {};
+    }
+
+    return context.chatMetadata[CHAT_METADATA_KEY];
+}
+
+function getChatPlaceholderStore(create = false, seedSource = null) {
+    const root = getChatMetadataRoot(create);
+    if (!root) {
+        return null;
+    }
+
+    if (!root.placeholders || typeof root.placeholders !== 'object') {
+        if (!create) {
+            return null;
+        }
+        root.placeholders = clonePlaceholderState(seedSource);
+    }
+
+    placeholders.forEach(({ key }) => {
+        ensurePlaceholderEntry(root.placeholders, key, seedSource?.[key] || PLACEHOLDER_DEFAULTS[key]);
+    });
+
+    return root.placeholders;
+}
+
+function getScopePlaceholderStore(scope = getActiveScope(), create = false) {
+    if (normalizeScope(scope) === 'global') {
+        return getGlobalPlaceholderStore();
+    }
+
+    const chatStore = getChatPlaceholderStore(create);
+    return chatStore || clonePlaceholderState();
+}
+
+function getPlaceholderSettings(placeholderKey, scope = getActiveScope(), create = false) {
+    return getScopePlaceholderStore(scope, create)[placeholderKey];
+}
+
+function getSwapState(scope = getActiveScope()) {
+    if (normalizeScope(scope) === 'global') {
+        return Boolean(extension_settings[extensionName]?.globalSwapCharUser);
+    }
+
+    const root = getChatMetadataRoot(false);
+    return Boolean(root?.swapCharUser);
+}
+
+function setSwapState(value, scope = getActiveScope()) {
+    const normalizedValue = Boolean(value);
+
+    if (normalizeScope(scope) === 'global') {
+        extension_settings[extensionName].globalSwapCharUser = normalizedValue;
+        return normalizedValue;
+    }
+
+    const root = getChatMetadataRoot(true);
+    if (root) {
+        root.swapCharUser = normalizedValue;
+    }
+
+    return normalizedValue;
+}
+
+function getSystemNameGetter(key) {
+    const contextKey = key === 'char' ? 'name2' : 'name1';
+
+    return () => {
+        const context = getContext();
+        return String(context?.[contextKey] ?? '');
+    };
+}
+
+function getEffectiveNameValue(key, scope = getActiveScope(), dynamic = false) {
+    const settings = getPlaceholderSettings(key, scope);
+    const content = String(settings?.content ?? '');
+
+    if (settings?.enabled && content.trim() !== '') {
+        return content;
+    }
+
+    const getter = getSystemNameGetter(key);
+    return dynamic ? getter : getter();
+}
+
+function getCharUserMacroValues(scope = getActiveScope(), dynamic = false) {
+    const effectiveChar = getEffectiveNameValue('char', scope, dynamic);
+    const effectiveUser = getEffectiveNameValue('user', scope, dynamic);
+
+    if (getSwapState(scope)) {
+        // Group chats can have speaker-specific native {{char}} behavior. The swapped fallback uses the current context name2 value.
+        return {
+            char: effectiveUser,
+            user: effectiveChar,
+        };
+    }
+
+    return {
+        char: effectiveChar,
+        user: effectiveUser,
+    };
+}
+
+function getCurrentCompactPage() {
+    return compactPages[currentPlaceholderIndex] || compactPages[0];
+}
+
+function getNameStorageKeyForOutput(outputKey, scope = getActiveScope()) {
+    if (!getSwapState(scope)) {
+        return outputKey;
+    }
+
+    return outputKey === 'char' ? 'user' : 'char';
+}
+
+function getNameRowData(outputKey, scope = getActiveScope()) {
+    const storageKey = getNameStorageKeyForOutput(outputKey, scope);
+    const settings = getPlaceholderSettings(storageKey, scope);
+
+    return {
+        outputKey,
+        storageKey,
+        settings,
+        systemName: getSystemNameGetter(storageKey)(),
+    };
+}
+
+function renderNameRows(scope = getActiveScope()) {
+    return ['char', 'user'].map((outputKey) => {
+        const row = getNameRowData(outputKey, scope);
+        const content = String(row.settings?.content ?? '');
+        const isEnabled = Boolean(row.settings?.enabled);
+
+        return `
+            <div class="dm-name-row" data-output-key="${row.outputKey}" data-storage-key="${row.storageKey}">
+                <input type="checkbox" class="dm-name-enabled" ${isEnabled ? 'checked' : ''}>
+                <label class="dm-name-label">{{${row.outputKey}}}</label>
+                <input type="text"
+                       class="dm-name-input"
+                       value="${escapeHtml(content)}"
+                       placeholder="${escapeHtml(row.systemName)}"
+                       ${!isEnabled ? 'disabled' : ''}>
+            </div>
+        `;
+    }).join('');
+}
+
+function saveScopeState(scope = getActiveScope()) {
+    if (normalizeScope(scope) === 'global') {
+        saveSettingsDebounced();
+        return;
+    }
+
+    if (!getChatMetadataRoot(false)) {
+        return;
+    }
+
+    saveMetadataDebounced();
+}
+
+function migrateLegacyGlobalPlaceholdersToGlobal() {
+    const settings = extension_settings[extensionName];
+    if (settings.legacyGlobalPlaceholdersMigrated) {
+        return;
+    }
+
+    const legacyRootPlaceholders = placeholders.reduce((result, { key }) => {
+        result[key] = settings[key];
+        return result;
+    }, {});
+
+    if (hasPlaceholderValues(legacyRootPlaceholders) && !hasPlaceholderValues(settings.globalPlaceholders)) {
+        settings.globalPlaceholders = clonePlaceholderState(legacyRootPlaceholders);
+    }
+
+    settings.legacyGlobalPlaceholdersMigrated = true;
+    saveSettingsDebounced();
+}
+
+function updateScopeButtons($container, scope = getActiveScope()) {
+    if (!$container || !$container.length) {
+        return;
+    }
+
+    $container.find('.dm-scope-btn').removeClass('active');
+    $container.find(`.dm-scope-btn[data-scope="${scope}"]`).addClass('active');
+}
+
+function syncCompactUIPopup() {
+    updateCompactUIButtonState();
+
+    if (!compactUIPopup) {
+        return;
+    }
+
+    const page = getCurrentCompactPage();
+    const scope = getActiveScope();
+    const isImpersonateOn = Boolean(extension_settings[extensionName]?.impersonateMode);
+    const isSwapOn = getSwapState(scope);
+    const isDirectionPage = page.type === 'single';
+
+    compactUIPopup.find('.dm-compact--title')
+        .text(page.title);
+    compactUIPopup.find('.dm-compact--radio').toggle(isDirectionPage);
+    compactUIPopup.find('.dm-compact--clear').toggle(isDirectionPage);
+
+    if (isDirectionPage) {
+        const settings = getPlaceholderSettings(page.placeholderKey, scope);
+        compactUIPopup.find('.dm-compact--radio').prop('checked', settings.enabled);
+        compactUIPopup.find('.dm-compact--content').html(`
+            <textarea class="dm-compact--textarea"
+                      placeholder="플레이스홀더 내용을 입력하세요..."
+                      ${!settings.enabled ? 'disabled' : ''}>${escapeHtml(settings.content || '')}</textarea>
+        `);
+    } else {
+        compactUIPopup.find('.dm-compact--radio').prop('checked', false);
+        compactUIPopup.find('.dm-compact--content').html(`
+            <div class="dm-name-rows">
+                ${renderNameRows(scope)}
+            </div>
+        `);
+    }
+
+    updateScopeButtons(compactUIPopup, scope);
+    compactUIPopup.find('.dm-impersonate-btn')
+        .toggleClass('active', isImpersonateOn)
+        .attr('aria-pressed', String(isImpersonateOn))
+        .attr('title', isImpersonateOn ? '대필 모드 켜짐' : '대필 모드 꺼짐');
+    compactUIPopup.find('.dm-swap-btn')
+        .toggleClass('active', isSwapOn)
+        .attr('aria-pressed', String(isSwapOn))
+        .attr('title', isSwapOn ? '역할 반전 켜짐' : '역할 반전 꺼짐');
+}
+
+function updateCompactUIButtonState() {
+    if (!compactUIButton) {
+        return;
+    }
+
+    const settings = extension_settings[extensionName];
+    const isDirectionOn = Boolean(settings?.extensionEnabled && getPlaceholderSettings('direction')?.enabled);
+    const isImpersonateOn = Boolean(settings?.extensionEnabled && settings?.impersonateMode);
+    const isSwapOn = Boolean(settings?.extensionEnabled && getSwapState());
+    const title = isImpersonateOn
+        ? 'Direction Manager - 대필 모드 켜짐'
+        : `Direction Manager 빠른 편집 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`;
+
+    compactUIButton
+        .toggleClass('dm-compact--directionOn', isDirectionOn)
+        .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
+        .toggleClass('dm-compact--swapOn', isSwapOn)
+        .attr('title', title)
+        .attr('aria-pressed', String(isDirectionOn || isImpersonateOn || isSwapOn));
+
+    compactUIButton.find('i')
+        .toggleClass('fa-feather', !isImpersonateOn)
+        .toggleClass('fa-user', isImpersonateOn);
+}
+
+function setActiveScope(scope) {
+    const normalized = normalizeScope(scope);
+
+    if (extension_settings[extensionName].activeScope === normalized) {
+        updateExtensionMenuUI();
+        syncCompactUIPopup();
+        return;
+    }
+
+    extension_settings[extensionName].activeScope = normalized;
+
+    if (extension_settings[extensionName].extensionEnabled) {
+        applyAllPlaceholders();
+    } else {
+        removeAllPlaceholders();
+    }
+
+    updateExtensionMenuUI();
+    syncCompactUIPopup();
+    saveSettingsDebounced();
+}
+
 // 컴팩트 UI 관련 변수들
 let compactUIButton = null;
 let compactUIPopup = null;
@@ -51,14 +422,44 @@ let compactUIPopup = null;
 // 설정 로드
 async function loadSettings() {
     extension_settings[extensionName] = extension_settings[extensionName] || {};
-    if (Object.keys(extension_settings[extensionName]).length === 0) {
-        Object.assign(extension_settings[extensionName], defaultSettings);
+    const settings = extension_settings[extensionName];
+
+    if (Object.keys(settings).length === 0) {
+        Object.assign(settings, {
+            extensionEnabled: defaultSettings.extensionEnabled,
+            directionPrompt: defaultSettings.directionPrompt,
+            promptDepth: defaultSettings.promptDepth,
+            activeScope: defaultSettings.activeScope,
+            impersonateMode: defaultSettings.impersonateMode,
+            globalSwapCharUser: defaultSettings.globalSwapCharUser,
+            legacyGlobalPlaceholdersMigrated: defaultSettings.legacyGlobalPlaceholdersMigrated,
+        });
     }
+
+    settings.extensionEnabled = typeof settings.extensionEnabled === 'boolean' ? settings.extensionEnabled : defaultSettings.extensionEnabled;
+    settings.directionPrompt = typeof settings.directionPrompt === 'string' ? settings.directionPrompt : defaultSettings.directionPrompt;
+    settings.promptDepth = Number.isFinite(Number(settings.promptDepth)) ? Number(settings.promptDepth) : defaultSettings.promptDepth;
+    settings.activeScope = normalizeScope(settings.activeScope);
+    settings.impersonateMode = typeof settings.impersonateMode === 'boolean'
+        ? settings.impersonateMode
+        : defaultSettings.impersonateMode;
+    settings.globalSwapCharUser = Boolean(settings.globalSwapCharUser);
+    settings.legacyGlobalPlaceholdersMigrated = typeof settings.legacyGlobalPlaceholdersMigrated === 'boolean'
+        ? settings.legacyGlobalPlaceholdersMigrated
+        : defaultSettings.legacyGlobalPlaceholdersMigrated;
+
+    getGlobalPlaceholderStore();
+    migrateLegacyGlobalPlaceholdersToGlobal();
 }
 
 // 플레이스홀더를 시스템에 적용
 function applyPlaceholderToSystem(placeholder) {
-    const settings = extension_settings[extensionName][placeholder.key];
+    if (placeholder.key === 'char' || placeholder.key === 'user') {
+        applyCharUserMacros();
+        return;
+    }
+
+    const settings = getPlaceholderSettings(placeholder.key);
     
     if (!settings.enabled) {
         // 비활성화된 경우
@@ -85,6 +486,28 @@ function applyPlaceholderToSystem(placeholder) {
             restoreSystemPlaceholder(placeholder.key);
         }
     }
+}
+
+function applyCharUserMacros() {
+    const scope = getActiveScope();
+
+    if (getSwapState(scope)) {
+        const macroValues = getCharUserMacroValues(scope, true);
+        replaceSystemPlaceholder('char', macroValues.char);
+        replaceSystemPlaceholder('user', macroValues.user);
+        return;
+    }
+
+    ['char', 'user'].forEach((key) => {
+        const settings = getPlaceholderSettings(key, scope);
+        const content = String(settings?.content ?? '');
+
+        if (settings?.enabled && content.trim() !== '') {
+            replaceSystemPlaceholder(key, content);
+        } else {
+            restoreSystemPlaceholder(key);
+        }
+    });
 }
 
 // 커스텀 플레이스홀더 등록
@@ -151,8 +574,13 @@ function restoreSystemPlaceholder(key) {
 // 모든 플레이스홀더 적용
 function applyAllPlaceholders() {
     placeholders.forEach(placeholder => {
+        if (placeholder.key === 'char' || placeholder.key === 'user') {
+            return;
+        }
+
         applyPlaceholderToSystem(placeholder);
     });
+    applyCharUserMacros();
 }
 
 // 모든 플레이스홀더 제거
@@ -177,6 +605,9 @@ function closeCompactUIPopup() {
             compactUIPopup = null;
         }, 200);
     }
+
+    $(window).off('resize.dmCompactPopup scroll.dmCompactPopup');
+    $(document).off('click.compactUI');
     
     if (compactUIButton) {
         compactUIButton.removeClass('dm-compact--hasPopup');
@@ -189,8 +620,8 @@ function showCompactUIPopup() {
         return closeCompactUIPopup();
     }
     
-    const currentPlaceholder = placeholders[currentPlaceholderIndex];
-    const settings = extension_settings[extensionName][currentPlaceholder.key];
+    const page = getCurrentCompactPage();
+    const isSwapOn = getSwapState();
     
     compactUIButton.addClass('dm-compact--hasPopup');
     
@@ -201,26 +632,49 @@ function showCompactUIPopup() {
                     <i class="fa-solid fa-chevron-left"></i>
                 </button>
                 <div class="dm-compact--title-row">
-                    <input type="checkbox" class="dm-compact--radio" ${settings.enabled ? 'checked' : ''}>
-                    <div class="dm-compact--title">${currentPlaceholder.name}</div>
+                    <input type="checkbox" class="dm-compact--radio">
+                    <div class="dm-compact--title">${page.title}</div>
                 </div>
-                <button class="dm-compact--nav dm-compact--clear" title="내용 지우기">
-                    <i class="fa-solid fa-eraser"></i>
-                </button>
-                <button class="dm-compact--nav dm-compact--next" title="다음 플레이스홀더">
-                    <i class="fa-solid fa-chevron-right"></i>
-                </button>
+                <div class="dm-compact--toolbar">
+                    <button class="dm-compact--nav dm-compact--clear" title="내용 지우기">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                    <button class="dm-compact--nav dm-compact--next" title="다음 플레이스홀더">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                </div>
             </div>
-            <div class="dm-compact--content">
-                <textarea class="dm-compact--textarea" 
-                          placeholder="플레이스홀더 내용을 입력하세요..." 
-                          ${!settings.enabled ? 'disabled' : ''}>${settings.content || ''}</textarea>
+            <div class="dm-compact--content"></div>
+            <div class="dm-compact--footer">
+                <div class="dm-scope-toggle" title="저장 범위">
+                    <button type="button" class="dm-scope-btn" data-scope="chat" title="챗 저장">
+                        <i class="fa-solid fa-comments"></i>
+                    </button>
+                    <button type="button" class="dm-scope-btn" data-scope="global" title="글로벌 저장">
+                        <i class="fa-solid fa-globe"></i>
+                    </button>
+                </div>
+                <div class="dm-compact--actions">
+                    <button type="button" class="dm-impersonate-btn" aria-pressed="false" title="대필 모드 꺼짐">
+                        <i class="fa-solid fa-user"></i>
+                    </button>
+                    <button type="button" class="dm-swap-btn ${isSwapOn ? 'active' : ''}" aria-pressed="${String(isSwapOn)}" title="${isSwapOn ? '역할 반전 켜짐' : '역할 반전 꺼짐'}">
+                        <i class="fa-solid fa-right-left"></i>
+                    </button>
+                </div>
             </div>
         </div>
     `;
     
     compactUIPopup = $(popupHtml);
-    $('#nonQRFormItems').append(compactUIPopup);
+    const $popupHost = $('#nonQRFormItems');
+    if ($popupHost.length) {
+        $popupHost.append(compactUIPopup);
+    } else {
+        compactUIButton.after(compactUIPopup);
+    }
+
+    syncCompactUIPopup();
     
     // 애니메이션
     setTimeout(() => {
@@ -229,6 +683,36 @@ function showCompactUIPopup() {
     
     // 이벤트 핸들러 설정
     setupCompactUIEventListeners();
+}
+
+// 버튼 위치 기준으로 팝업 위치 계산
+function positionCompactUIPopup() {
+    if (!compactUIButton || !compactUIPopup) return;
+
+    const btnRect = compactUIButton[0].getBoundingClientRect();
+    const margin = 6;
+
+    const popupWidth = compactUIPopup.outerWidth();
+    const popupHeight = compactUIPopup.outerHeight();
+
+    let left = btnRect.right - popupWidth;
+    let top = btnRect.top - popupHeight - margin;
+
+    // 위로 공간이 부족하면 아래로 표시
+    if (top < margin) {
+        top = btnRect.bottom + margin;
+        compactUIPopup.addClass('dm-compact--below');
+    } else {
+        compactUIPopup.removeClass('dm-compact--below');
+    }
+
+    // 화면을 벗어나지 않도록 좌우 보정
+    left = Math.max(margin, Math.min(left, window.innerWidth - popupWidth - margin));
+
+    compactUIPopup.css({
+        top: `${top}px`,
+        left: `${left}px`
+    });
 }
 
 // 컴팩트 UI 이벤트 리스너 설정
@@ -244,42 +728,107 @@ function setupCompactUIEventListeners() {
     compactUIPopup.find('.dm-compact--next').on('click', () => {
         navigateCompactPlaceholder(1);
     });
+
+    // 범위 전환 버튼
+    compactUIPopup.find('.dm-scope-btn').on('click', function() {
+        setActiveScope($(this).data('scope'));
+    });
+
+    compactUIPopup.find('.dm-impersonate-btn').on('click', function() {
+        const settings = extension_settings[extensionName];
+        settings.impersonateMode = !settings.impersonateMode;
+        syncCompactUIPopup();
+        saveSettingsDebounced();
+    });
+
+    compactUIPopup.find('.dm-swap-btn').on('click', function() {
+        const scope = getActiveScope();
+        setSwapState(!getSwapState(scope), scope);
+        applyCharUserMacros();
+        updateExtensionMenuUI();
+        syncCompactUIPopup();
+        saveScopeState(scope);
+    });
     
     // 라디오 버튼 변경 이벤트
     compactUIPopup.find('.dm-compact--radio').on('change', function() {
+        const page = getCurrentCompactPage();
+        if (page.type !== 'single') {
+            return;
+        }
+
         const isEnabled = $(this).is(':checked');
-        const currentPlaceholder = placeholders[currentPlaceholderIndex];
+        const scope = getActiveScope();
+        const settings = getPlaceholderSettings(page.placeholderKey, scope, true);
         
-        extension_settings[extensionName][currentPlaceholder.key].enabled = isEnabled;
+        settings.enabled = isEnabled;
         
         // 텍스트에어리어 활성화/비활성화
         const textarea = compactUIPopup.find('.dm-compact--textarea');
         textarea.prop('disabled', !isEnabled);
         
-        applyPlaceholderToSystem(currentPlaceholder);
-        saveSettingsDebounced();
+        applyPlaceholderToSystem(placeholders.find(({ key }) => key === page.placeholderKey));
+        updateCompactUIButtonState();
+        saveScopeState(scope);
     });
     
     // 지우개 버튼
     compactUIPopup.find('.dm-compact--clear').on('click', function() {
+        const page = getCurrentCompactPage();
+        if (page.type !== 'single') {
+            return;
+        }
+
         const confirmed = confirm('이 플레이스홀더의 내용을 모두 지우시겠습니까?');
         if (confirmed) {
-            const currentPlaceholder = placeholders[currentPlaceholderIndex];
-            extension_settings[extensionName][currentPlaceholder.key].content = "";
+            const scope = getActiveScope();
+            const settings = getPlaceholderSettings(page.placeholderKey, scope, true);
+            settings.content = "";
             compactUIPopup.find('.dm-compact--textarea').val('');
-            applyPlaceholderToSystem(currentPlaceholder);
-            saveSettingsDebounced();
+            applyPlaceholderToSystem(placeholders.find(({ key }) => key === page.placeholderKey));
+            saveScopeState(scope);
         }
     });
     
     // 텍스트에어리어 변경 이벤트
-    compactUIPopup.find('.dm-compact--textarea').on('input', function() {
+    compactUIPopup.on('input', '.dm-compact--textarea', function() {
+        const page = getCurrentCompactPage();
+        if (page.type !== 'single') {
+            return;
+        }
+
         const newContent = $(this).val();
-        const currentPlaceholder = placeholders[currentPlaceholderIndex];
+        const scope = getActiveScope();
+        const settings = getPlaceholderSettings(page.placeholderKey, scope, true);
         
-        extension_settings[extensionName][currentPlaceholder.key].content = newContent;
-        applyPlaceholderToSystem(currentPlaceholder);
-        saveSettingsDebounced();
+        settings.content = newContent;
+        applyPlaceholderToSystem(placeholders.find(({ key }) => key === page.placeholderKey));
+        saveScopeState(scope);
+    });
+
+    compactUIPopup.on('change', '.dm-name-enabled', function() {
+        const $row = $(this).closest('.dm-name-row');
+        const storageKey = String($row.data('storage-key'));
+        const isEnabled = $(this).is(':checked');
+        const scope = getActiveScope();
+        const settings = getPlaceholderSettings(storageKey, scope, true);
+
+        settings.enabled = isEnabled;
+        $row.find('.dm-name-input').prop('disabled', !isEnabled);
+        applyCharUserMacros();
+        updateCompactUIButtonState();
+        saveScopeState(scope);
+    });
+
+    compactUIPopup.on('input', '.dm-name-input', function() {
+        const $row = $(this).closest('.dm-name-row');
+        const storageKey = String($row.data('storage-key'));
+        const scope = getActiveScope();
+        const settings = getPlaceholderSettings(storageKey, scope, true);
+
+        settings.content = $(this).val();
+        applyCharUserMacros();
+        saveScopeState(scope);
     });
     
     // 외부 클릭시 닫기
@@ -296,20 +845,12 @@ function navigateCompactPlaceholder(direction) {
     currentPlaceholderIndex += direction;
     
     if (currentPlaceholderIndex < 0) {
-        currentPlaceholderIndex = placeholders.length - 1;
-    } else if (currentPlaceholderIndex >= placeholders.length) {
+        currentPlaceholderIndex = compactPages.length - 1;
+    } else if (currentPlaceholderIndex >= compactPages.length) {
         currentPlaceholderIndex = 0;
     }
-    
-    // 팝업 업데이트
-    const currentPlaceholder = placeholders[currentPlaceholderIndex];
-    const settings = extension_settings[extensionName][currentPlaceholder.key];
-    
-    compactUIPopup.find('.dm-compact--title').text(currentPlaceholder.name);
-    compactUIPopup.find('.dm-compact--radio').prop('checked', settings.enabled);
-    compactUIPopup.find('.dm-compact--textarea')
-        .val(settings.content || '')
-        .prop('disabled', !settings.enabled);
+
+    syncCompactUIPopup();
 }
 
 // 컴팩트 UI 버튼 추가
@@ -327,7 +868,7 @@ function addCompactUIButton() {
     }
     
     const buttonHtml = `
-        <div class="dm-compact--button menu_button" title="Direction Manager 빠른 편집">
+        <div class="dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager 빠른 편집 - 전개 지시 꺼짐">
             <i class="fa-solid fa-feather"></i>
         </div>
     `;
@@ -342,9 +883,75 @@ function addCompactUIButton() {
     } else {
         compactUIButton.hide();
     }
+
+    updateCompactUIButtonState();
     
     // 클릭 이벤트
     compactUIButton.on('click', showCompactUIPopup);
+}
+
+let impersonateRequestInFlight = false;
+
+function isImpersonateModeEnabled() {
+    const settings = extension_settings[extensionName];
+    return Boolean(settings?.extensionEnabled && settings?.impersonateMode);
+}
+
+async function runImpersonateFromSendTextarea() {
+    if (impersonateRequestInFlight) {
+        return;
+    }
+
+    const parentDoc = globalThis.parent ? globalThis.parent.document : document;
+    const input = String($('#send_textarea', parentDoc).val() ?? '');
+    impersonateRequestInFlight = true;
+
+    try {
+        const request = {
+            text: input,
+            handled: false,
+        };
+        const CustomEventConstructor = parentDoc.defaultView?.CustomEvent;
+
+        if (typeof CustomEventConstructor !== 'function') {
+            throw new Error('WriteSupporter 대필 이벤트를 만들 수 없습니다.');
+        }
+
+        parentDoc.dispatchEvent(new CustomEventConstructor('writeSupporterImpersonateDirect', {
+            detail: request,
+        }));
+
+        if (!request.handled) {
+            throw new Error('WriteSupporter 대필 리스너를 찾지 못했습니다.');
+        }
+    } catch (error) {
+        console.error(`[${extensionName}] 대필 실행 실패:`, error);
+        window.toastr?.error?.('대필 실행에 실패했습니다. 콘솔을 확인해주세요.');
+    } finally {
+        impersonateRequestInFlight = false;
+    }
+}
+
+function handleImpersonateSendCapture(event) {
+    if (!isImpersonateModeEnabled()) {
+        return;
+    }
+
+    const sendButton = event.target instanceof Element ? event.target.closest('#send_but') : null;
+    if (!sendButton) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    // 대필은 1회용이다. 요청 성공 여부와 무관하게 보내기 클릭 즉시 해제한다.
+    const settings = extension_settings[extensionName];
+    settings.impersonateMode = false;
+    syncCompactUIPopup();
+    saveSettingsDebounced();
+
+    void runImpersonateFromSendTextarea();
 }
 
 // 확장 메뉴 초기화
@@ -372,6 +979,10 @@ function updateExtensionMenuUI() {
     
     // 활성화 체크박스 상태 설정
     $('#direction_manager_enabled').prop('checked', settings.extensionEnabled);
+    updateScopeButtons($('#direction_manager_scope'), getActiveScope());
+    $('#direction_manager_swap')
+        .prop('checked', getSwapState())
+        .attr('title', getSwapState() ? '역할 반전 켜짐' : '역할 반전 꺼짐');
     
     // 프롬프트 텍스트 설정
     $('#direction_prompt_text').val(settings.directionPrompt || DEFAULT_DIRECTION_PROMPT);
@@ -391,11 +1002,13 @@ function setupExtensionMenuEventHandlers() {
             // 확장 활성화 시: 컴팩트 UI 버튼 표시 및 모든 플레이스홀더 적용
             if (compactUIButton) {
                 compactUIButton.show();
+                updateCompactUIButtonState();
             }
             applyAllPlaceholders();
         } else {
             // 확장 비활성화 시: 컴팩트 UI 버튼 숨김 및 모든 매크로 제거
             if (compactUIButton) {
+                updateCompactUIButtonState();
                 compactUIButton.hide();
                 // 팝업이 열려있으면 닫기
                 if (compactUIPopup) {
@@ -405,7 +1018,25 @@ function setupExtensionMenuEventHandlers() {
             removeAllPlaceholders();
         }
         
+        updateCompactUIButtonState();
         saveSettingsDebounced();
+    });
+
+    $('#direction_manager_scope .dm-scope-btn').on('click', function() {
+        setActiveScope($(this).data('scope'));
+    });
+
+    $('#direction_manager_swap').on('change', function() {
+        const scope = getActiveScope();
+        setSwapState($(this).is(':checked'), scope);
+
+        if (extension_settings[extensionName].extensionEnabled) {
+            applyCharUserMacros();
+        }
+
+        updateExtensionMenuUI();
+        syncCompactUIPopup();
+        saveScopeState(scope);
     });
     
     // 프롬프트 텍스트 변경 이벤트 (실시간 저장)
@@ -434,6 +1065,7 @@ function setupExtensionMenuEventHandlers() {
 // 프롬프트 주입 함수
 function injectDirectionPrompt(eventData) {
     const settings = extension_settings[extensionName];
+    const placeholderStore = getScopePlaceholderStore();
     
     // 확장이 비활성화되어 있으면 주입하지 않음
     if (!settings.extensionEnabled) {
@@ -441,7 +1073,7 @@ function injectDirectionPrompt(eventData) {
     }
     
     // Direction 토글이 비활성화되어 있으면 주입하지 않음
-    if (!settings.direction.enabled) {
+    if (!placeholderStore.direction.enabled) {
         return;
     }
     
@@ -454,21 +1086,16 @@ function injectDirectionPrompt(eventData) {
     let processedPrompt = settings.directionPrompt;
     
     // {{direction}} 플레이스홀더 치환
-    if (settings.direction.content) {
-        processedPrompt = processedPrompt.replace(/\{\{direction\}\}/g, settings.direction.content);
+    if (placeholderStore.direction.content) {
+        processedPrompt = processedPrompt.replace(/\{\{direction\}\}/g, placeholderStore.direction.content);
     } else {
         processedPrompt = processedPrompt.replace(/\{\{direction\}\}/g, '');
     }
     
-    // {{char}} 플레이스홀더 치환
-    if (settings.char.enabled && settings.char.content) {
-        processedPrompt = processedPrompt.replace(/\{\{char\}\}/g, settings.char.content);
-    }
-    
-    // {{user}} 플레이스홀더 치환
-    if (settings.user.enabled && settings.user.content) {
-        processedPrompt = processedPrompt.replace(/\{\{user\}\}/g, settings.user.content);
-    }
+    const macroValues = getCharUserMacroValues(getActiveScope(), false);
+    processedPrompt = processedPrompt
+        .replace(/\{\{char\}\}/g, String(macroValues.char ?? ''))
+        .replace(/\{\{user\}\}/g, String(macroValues.user ?? ''));
     
     const depth = settings.promptDepth || 1;
     
@@ -497,13 +1124,32 @@ function injectDirectionPrompt(eventData) {
 // 확장 초기화
 jQuery(async () => {
     await loadSettings();
-    applyAllPlaceholders();
+
+    if (extension_settings[extensionName].extensionEnabled) {
+        applyAllPlaceholders();
+    } else {
+        removeAllPlaceholders();
+    }
     
     // 확장 메뉴 초기화
     await initializeExtensionMenu();
     
     // 컴팩트 UI 버튼 추가
     addCompactUIButton();
+
+    // 대필 모드에서는 일반 메시지 전송보다 먼저 보내기 클릭을 가로챈다.
+    document.addEventListener('click', handleImpersonateSendCapture, true);
+
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        if (extension_settings[extensionName].extensionEnabled) {
+            applyAllPlaceholders();
+        } else {
+            removeAllPlaceholders();
+        }
+
+        updateExtensionMenuUI();
+        syncCompactUIPopup();
+    });
     
     // 프롬프트 주입 이벤트 리스너 등록
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, injectDirectionPrompt);

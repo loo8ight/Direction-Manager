@@ -10,6 +10,22 @@
                 <span>Direction Manager 활성화</span>
             </label>
         </div>
+        <div class="flex-container flexnowrap">
+            <div id="direction_manager_scope" class="dm-scope-toggle dm-settings-scope-toggle" title="저장 범위">
+                <button type="button" class="menu_button dm-scope-btn" data-scope="chat" title="챗 저장">
+                    <i class="fa-solid fa-comments"></i>
+                </button>
+                <button type="button" class="menu_button dm-scope-btn" data-scope="global" title="글로벌 저장">
+                    <i class="fa-solid fa-globe"></i>
+                </button>
+            </div>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="direction_manager_swap" title="스코프별로 {{char}}와 {{user}} 역할을 교차 치환합니다.">
+                <input type="checkbox" id="direction_manager_swap" class="checkbox">
+                <span>역할 반전</span>
+            </label>
+        </div>
         <br>
         <div class="">
             <div><label for="direction_prompt_text" class="flex1">Direction 프롬프트</label></div>
