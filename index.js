@@ -381,14 +381,22 @@ function updateCompactUIButtonState() {
 
     const settings = extension_settings[extensionName];
     const isDirectionOn = Boolean(settings?.extensionEnabled && getPlaceholderSettings('direction')?.enabled);
+    const isImpersonateOn = Boolean(settings?.extensionEnabled && settings?.impersonateMode);
     const isSwapOn = Boolean(settings?.extensionEnabled && getSwapState());
+    const title = isImpersonateOn
+        ? 'Direction Manager - 대필 모드 켜짐'
+        : `Direction Manager 빠른 편집 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`;
 
     compactUIButton
         .toggleClass('dm-compact--directionOn', isDirectionOn)
+        .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
         .toggleClass('dm-compact--swapOn', isSwapOn)
-        .attr('title', `Direction Manager 오버라이드 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`)
-        .attr('aria-pressed', String(isDirectionOn || isSwapOn));
+        .attr('title', title)
+        .attr('aria-pressed', String(isDirectionOn || isImpersonateOn || isSwapOn));
 
+    compactUIButton.find('i')
+        .toggleClass('fa-feather', !isImpersonateOn)
+        .toggleClass('fa-user', isImpersonateOn);
 }
 
 function setActiveScope(scope) {
