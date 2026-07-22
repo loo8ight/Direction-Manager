@@ -325,12 +325,25 @@ div.dm-compact--button.dm-compact--directionOn:hover {
     color: #21486b;
 }
 
-.dm-impersonate-btn.active,
-.dm-auto-cycle-btn.active,
 .dm-swap-btn.active {
     background-color: #dce9f6;
     color: #21486b;
     border-color: #9ebad6;
+}
+
+.dm-impersonate-btn.active,
+.dm-auto-cycle-btn.active,
+.dm-impersonate-btn.active:hover,
+.dm-auto-cycle-btn.active:hover {
+    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
+    background-color: var(--SmartThemeBodyColor, #505050) !important;
+    border-color: var(--SmartThemeBodyColor, #505050) !important;
+    box-shadow: none !important;
+}
+
+.dm-impersonate-btn.active > i,
+.dm-auto-cycle-btn.active > i {
+    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
 }
 
 #direction_manager_scope {
