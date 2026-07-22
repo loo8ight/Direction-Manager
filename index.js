@@ -36,6 +36,7 @@ const defaultSettings = {
     promptDepth: 1,  // 0: Chat History 끝에 삽입, >0: 끝에서부터 N번째 위치에 삽입
     activeScope: 'chat',
     impersonateMode: false,
+    autoCycleMode: false,
     globalSwapCharUser: false,
     legacyGlobalPlaceholdersMigrated: false
 };
@@ -369,28 +370,31 @@ function syncCompactUIPopup() {
 }
 
 function updateCompactUIButtonState() {
-    if (!compactUIButton) {
+    if (!quickControls || !compactUIButton || !impersonateUIButton || !autoCycleUIButton) {
         return;
     }
 
     const settings = extension_settings[extensionName];
     const isDirectionOn = Boolean(settings?.extensionEnabled && getPlaceholderSettings('direction')?.enabled);
     const isImpersonateOn = Boolean(settings?.extensionEnabled && settings?.impersonateMode);
+    const isAutoCycleOn = Boolean(settings?.extensionEnabled && settings?.autoCycleMode);
     const isSwapOn = Boolean(settings?.extensionEnabled && getSwapState());
-    const title = isImpersonateOn
-        ? 'Direction Manager - 대필 모드 켜짐'
-        : `Direction Manager 빠른 편집 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`;
 
     compactUIButton
         .toggleClass('dm-compact--directionOn', isDirectionOn)
-        .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
         .toggleClass('dm-compact--swapOn', isSwapOn)
-        .attr('title', title)
-        .attr('aria-pressed', String(isDirectionOn || isImpersonateOn || isSwapOn));
+        .attr('title', `Direction Manager 오버라이드 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`)
+        .attr('aria-pressed', String(isDirectionOn || isSwapOn));
 
-    compactUIButton.find('i')
-        .toggleClass('fa-feather', !isImpersonateOn)
-        .toggleClass('fa-user', isImpersonateOn);
+    impersonateUIButton
+        .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
+        .attr('title', isImpersonateOn ? '대필 모드 켜짐' : '대필 모드 꺼짐')
+        .attr('aria-pressed', String(isImpersonateOn));
+
+    autoCycleUIButton
+        .toggleClass('dm-compact--autoCycleOn', isAutoCycleOn)
+        .attr('title', isAutoCycleOn ? '순환 대필 켜짐' : '순환 대필 꺼짐')
+        .attr('aria-pressed', String(isAutoCycleOn));
 }
 
 function setActiveScope(scope) {
@@ -417,6 +421,9 @@ function setActiveScope(scope) {
 
 // 컴팩트 UI 관련 변수들
 let compactUIButton = null;
+let quickControls = null;
+let impersonateUIButton = null;
+let autoCycleUIButton = null;
 let compactUIPopup = null;
 
 // 설정 로드
@@ -431,6 +438,7 @@ async function loadSettings() {
             promptDepth: defaultSettings.promptDepth,
             activeScope: defaultSettings.activeScope,
             impersonateMode: defaultSettings.impersonateMode,
+            autoCycleMode: defaultSettings.autoCycleMode,
             globalSwapCharUser: defaultSettings.globalSwapCharUser,
             legacyGlobalPlaceholdersMigrated: defaultSettings.legacyGlobalPlaceholdersMigrated,
         });
@@ -443,6 +451,9 @@ async function loadSettings() {
     settings.impersonateMode = typeof settings.impersonateMode === 'boolean'
         ? settings.impersonateMode
         : defaultSettings.impersonateMode;
+    settings.autoCycleMode = typeof settings.autoCycleMode === 'boolean'
+        ? settings.autoCycleMode
+        : defaultSettings.autoCycleMode;
     settings.globalSwapCharUser = Boolean(settings.globalSwapCharUser);
     settings.legacyGlobalPlaceholdersMigrated = typeof settings.legacyGlobalPlaceholdersMigrated === 'boolean'
         ? settings.legacyGlobalPlaceholdersMigrated
@@ -828,7 +839,7 @@ function setupCompactUIEventListeners() {
     
     // 외부 클릭시 닫기
     $(document).on('click.compactUI', (e) => {
-        if (!$(e.target).closest('.dm-compact--popup, .dm-compact--button').length) {
+        if (!$(e.target).closest('.dm-compact--popup, .dm-quick-controls').length) {
             closeCompactUIPopup();
             $(document).off('click.compactUI');
         }
@@ -857,35 +868,69 @@ function addCompactUIButton() {
     }
     
     // 기존 버튼 제거
-    if (compactUIButton) {
-        compactUIButton.remove();
+    if (quickControls) {
+        quickControls.remove();
+        quickControls = null;
         compactUIButton = null;
+        impersonateUIButton = null;
+        autoCycleUIButton = null;
     }
     
     const buttonHtml = `
-        <div class="dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager 빠른 편집 - 전개 지시 꺼짐">
-            <i class="fa-solid fa-feather"></i>
+        <div class="dm-quick-controls" aria-label="Direction Manager 빠른 제어">
+            <div class="dm-quick-button dm-auto-cycle-button menu_button" role="button" aria-pressed="false" title="순환 대필 꺼짐">
+                <i class="fa-solid fa-rotate"></i>
+            </div>
+            <div class="dm-quick-button dm-impersonate-button menu_button" role="button" aria-pressed="false" title="대필 모드 꺼짐">
+                <i class="fa-solid fa-user"></i>
+            </div>
+            <div class="dm-quick-button dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager 오버라이드 - 전개 지시 꺼짐">
+                <i class="fa-solid fa-feather"></i>
+            </div>
         </div>
     `;
     
-    compactUIButton = $(buttonHtml);
-    $(ta).after(compactUIButton);
+    quickControls = $(buttonHtml);
+    autoCycleUIButton = quickControls.find('.dm-auto-cycle-button');
+    impersonateUIButton = quickControls.find('.dm-impersonate-button');
+    compactUIButton = quickControls.find('.dm-compact--button');
+    $(ta).after(quickControls);
     
     // 확장 활성화 상태에 따라 버튼 표시/숨김
     const settings = extension_settings[extensionName];
     if (settings && settings.extensionEnabled) {
-        compactUIButton.show();
+        quickControls.show();
     } else {
-        compactUIButton.hide();
+        quickControls.hide();
     }
 
     updateCompactUIButtonState();
     
     // 클릭 이벤트
     compactUIButton.on('click', showCompactUIPopup);
+    impersonateUIButton.on('click', toggleImpersonateMode);
+    autoCycleUIButton.on('click', toggleAutoCycleMode);
 }
 
 let impersonateRequestInFlight = false;
+let autoCycleAwaitingUserSend = false;
+
+function setImpersonateMode(enabled, { preserveAutoCycle = false } = {}) {
+    const settings = extension_settings[extensionName];
+    if (!settings) {
+        return false;
+    }
+
+    settings.impersonateMode = Boolean(enabled);
+    if (!settings.impersonateMode && settings.autoCycleMode && !preserveAutoCycle) {
+        settings.autoCycleMode = false;
+        autoCycleAwaitingUserSend = false;
+    }
+
+    syncCompactUIPopup();
+    saveSettingsDebounced();
+    return settings.impersonateMode;
+}
 
 function toggleImpersonateMode() {
     const settings = extension_settings[extensionName];
@@ -893,10 +938,24 @@ function toggleImpersonateMode() {
         return false;
     }
 
-    settings.impersonateMode = !settings.impersonateMode;
+    return setImpersonateMode(!settings.impersonateMode);
+}
+
+function toggleAutoCycleMode() {
+    const settings = extension_settings[extensionName];
+    if (!settings) {
+        return false;
+    }
+
+    settings.autoCycleMode = !settings.autoCycleMode;
+    autoCycleAwaitingUserSend = false;
+    if (settings.autoCycleMode) {
+        settings.impersonateMode = true;
+    }
+
     syncCompactUIPopup();
     saveSettingsDebounced();
-    return settings.impersonateMode;
+    return settings.autoCycleMode;
 }
 
 function handleImpersonateHotkey(event) {
@@ -968,13 +1027,22 @@ function handleImpersonateSendCapture(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    // 대필은 1회용이다. 요청 성공 여부와 무관하게 보내기 클릭 즉시 해제한다.
+    // 대필 실행 중에는 일반 전송으로 오인되지 않도록 즉시 해제한다.
     const settings = extension_settings[extensionName];
-    settings.impersonateMode = false;
-    syncCompactUIPopup();
-    saveSettingsDebounced();
+    autoCycleAwaitingUserSend = Boolean(settings.autoCycleMode);
+    setImpersonateMode(false, { preserveAutoCycle: true });
 
     void runImpersonateFromSendTextarea();
+}
+
+function handleAutoCycleMessageSent() {
+    const settings = extension_settings[extensionName];
+    if (!settings?.extensionEnabled || !settings.autoCycleMode || !autoCycleAwaitingUserSend) {
+        return;
+    }
+
+    autoCycleAwaitingUserSend = false;
+    setImpersonateMode(true, { preserveAutoCycle: true });
 }
 
 // 확장 메뉴 초기화
@@ -1023,16 +1091,16 @@ function setupExtensionMenuEventHandlers() {
         
         if (isEnabled) {
             // 확장 활성화 시: 컴팩트 UI 버튼 표시 및 모든 플레이스홀더 적용
-            if (compactUIButton) {
-                compactUIButton.show();
+            if (quickControls) {
+                quickControls.show();
                 updateCompactUIButtonState();
             }
             applyAllPlaceholders();
         } else {
             // 확장 비활성화 시: 컴팩트 UI 버튼 숨김 및 모든 매크로 제거
-            if (compactUIButton) {
+            if (quickControls) {
                 updateCompactUIButtonState();
-                compactUIButton.hide();
+                quickControls.hide();
                 // 팝업이 열려있으면 닫기
                 if (compactUIPopup) {
                     closeCompactUIPopup();
@@ -1165,6 +1233,11 @@ jQuery(async () => {
     document.addEventListener('click', handleImpersonateSendCapture, true);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        autoCycleAwaitingUserSend = false;
+        if (extension_settings[extensionName].autoCycleMode) {
+            extension_settings[extensionName].impersonateMode = true;
+        }
+
         if (extension_settings[extensionName].extensionEnabled) {
             applyAllPlaceholders();
         } else {
@@ -1174,6 +1247,8 @@ jQuery(async () => {
         updateExtensionMenuUI();
         syncCompactUIPopup();
     });
+
+    eventSource.on(event_types.MESSAGE_SENT, handleAutoCycleMessageSent);
     
     // 프롬프트 주입 이벤트 리스너 등록
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, injectDirectionPrompt);

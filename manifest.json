@@ -3,10 +3,10 @@
     "loading_order": 9,
     "requires": [],
     "optional": [],
-    "js": "index.js?v=20260722-alt-e-toggle1",
-    "css": "style.css?v=20260722-impersonate-invert2",
+    "js": "index.js?v=20260723-auto-cycle1",
+    "css": "style.css?v=20260723-quick-controls1",
     "author": "Direction-Manager Extension",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "homePage": ""
 }
 
