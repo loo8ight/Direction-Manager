@@ -1,20 +1,14 @@
 /* Direction-Manager 확장 스타일 - 컴팩트 UI 전용 */
 
 
-/* 우측 하단 빠른 제어: 순환 대필 -> 대필 -> 오버라이드 */
-.dm-quick-controls {
+/* 우측 하단 Direction 버튼 */
+.dm-compact--button {
     order: 3;
     display: flex;
     align-items: center;
-    gap: 2px;
     height: auto;
     margin: 0;
     margin-left: -5px;
-}
-
-.dm-quick-button {
-    display: flex;
-    align-items: center;
     font-size: 0.75em;
     background-color: transparent;
     color: var(--SmartThemeBodyColor, #5b6b7c);
@@ -27,7 +21,7 @@
     position: relative;
 }
 
-.dm-quick-button:hover {
+.dm-compact--button:hover {
     opacity: 1;
     background-color: var(--white20a, rgba(127, 127, 127, 0.14));
 }
@@ -36,42 +30,16 @@
     opacity: 1;
 }
 
-.dm-quick-button.dm-compact--impersonateOn,
-.dm-quick-button.dm-compact--autoCycleOn {
-    opacity: 1;
-}
-
-.dm-quick-button.menu_button.dm-compact--impersonateOn,
-.dm-quick-button.menu_button.dm-compact--autoCycleOn,
-.dm-quick-button.menu_button.dm-compact--impersonateOn:hover,
-.dm-quick-button.menu_button.dm-compact--autoCycleOn:hover,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--impersonateOn,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--autoCycleOn,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--impersonateOn:hover,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--autoCycleOn:hover {
-    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
-    background-color: var(--SmartThemeBodyColor, #505050) !important;
-    border-color: var(--SmartThemeBodyColor, #505050) !important;
-    box-shadow: none !important;
-}
-
-.dm-quick-button.dm-compact--impersonateOn > i,
-.dm-quick-button.dm-compact--autoCycleOn > i,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--impersonateOn > i,
-body.st-custom-theme-active #send_form .dm-quick-button.menu_button.dm-compact--autoCycleOn > i {
-    color: var(--SmartThemeBlurTintColor, var(--secondaryBg, #ffffff)) !important;
-}
-
-.dm-quick-button.menu_button.dm-compact--directionOn,
-div.dm-quick-button.dm-compact--directionOn {
+.dm-compact--button.menu_button.dm-compact--directionOn,
+div.dm-compact--button.dm-compact--directionOn {
     opacity: 1;
     color: var(--SmartThemeQuoteColor, #68a5d8);
     background-color: var(--white20a, rgba(104, 165, 216, 0.14));
     box-shadow: inset 0 0 0 1px var(--SmartThemeQuoteColor, #68a5d8);
 }
 
-.dm-quick-button.menu_button.dm-compact--directionOn:hover,
-div.dm-quick-button.dm-compact--directionOn:hover {
+.dm-compact--button.menu_button.dm-compact--directionOn:hover,
+div.dm-compact--button.dm-compact--directionOn:hover {
     background-color: var(--white30a, rgba(104, 165, 216, 0.22));
 }
 
@@ -466,6 +434,7 @@ div.dm-quick-button.dm-compact--directionOn:hover {
         padding: 0;
     }
 
+    .dm-auto-cycle-btn,
     .dm-impersonate-btn,
     .dm-swap-btn {
         width: 22px;

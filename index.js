@@ -333,6 +333,7 @@ function syncCompactUIPopup() {
     const page = getCurrentCompactPage();
     const scope = getActiveScope();
     const isImpersonateOn = Boolean(extension_settings[extensionName]?.impersonateMode);
+    const isAutoCycleOn = Boolean(extension_settings[extensionName]?.autoCycleMode);
     const isSwapOn = getSwapState(scope);
     const isDirectionPage = page.type === 'single';
 
@@ -359,6 +360,10 @@ function syncCompactUIPopup() {
     }
 
     updateScopeButtons(compactUIPopup, scope);
+    compactUIPopup.find('.dm-auto-cycle-btn')
+        .toggleClass('active', isAutoCycleOn)
+        .attr('aria-pressed', String(isAutoCycleOn))
+        .attr('title', isAutoCycleOn ? '순환 대필 켜짐' : '순환 대필 꺼짐');
     compactUIPopup.find('.dm-impersonate-btn')
         .toggleClass('active', isImpersonateOn)
         .attr('aria-pressed', String(isImpersonateOn))
@@ -366,18 +371,16 @@ function syncCompactUIPopup() {
     compactUIPopup.find('.dm-swap-btn')
         .toggleClass('active', isSwapOn)
         .attr('aria-pressed', String(isSwapOn))
-        .attr('title', isSwapOn ? '역할 반전 켜짐' : '역할 반전 꺼짐');
+        .attr('title', isSwapOn ? '오버라이드(역할 반전) 켜짐' : '오버라이드(역할 반전) 꺼짐');
 }
 
 function updateCompactUIButtonState() {
-    if (!quickControls || !compactUIButton || !impersonateUIButton || !autoCycleUIButton) {
+    if (!compactUIButton) {
         return;
     }
 
     const settings = extension_settings[extensionName];
     const isDirectionOn = Boolean(settings?.extensionEnabled && getPlaceholderSettings('direction')?.enabled);
-    const isImpersonateOn = Boolean(settings?.extensionEnabled && settings?.impersonateMode);
-    const isAutoCycleOn = Boolean(settings?.extensionEnabled && settings?.autoCycleMode);
     const isSwapOn = Boolean(settings?.extensionEnabled && getSwapState());
 
     compactUIButton
@@ -386,15 +389,6 @@ function updateCompactUIButtonState() {
         .attr('title', `Direction Manager 오버라이드 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`)
         .attr('aria-pressed', String(isDirectionOn || isSwapOn));
 
-    impersonateUIButton
-        .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
-        .attr('title', isImpersonateOn ? '대필 모드 켜짐' : '대필 모드 꺼짐')
-        .attr('aria-pressed', String(isImpersonateOn));
-
-    autoCycleUIButton
-        .toggleClass('dm-compact--autoCycleOn', isAutoCycleOn)
-        .attr('title', isAutoCycleOn ? '순환 대필 켜짐' : '순환 대필 꺼짐')
-        .attr('aria-pressed', String(isAutoCycleOn));
 }
 
 function setActiveScope(scope) {
@@ -421,9 +415,6 @@ function setActiveScope(scope) {
 
 // 컴팩트 UI 관련 변수들
 let compactUIButton = null;
-let quickControls = null;
-let impersonateUIButton = null;
-let autoCycleUIButton = null;
 let compactUIPopup = null;
 
 // 설정 로드
@@ -666,10 +657,13 @@ function showCompactUIPopup() {
                     </button>
                 </div>
                 <div class="dm-compact--actions">
+                    <button type="button" class="dm-auto-cycle-btn" aria-pressed="false" title="순환 대필 꺼짐">
+                        <i class="fa-solid fa-rotate"></i>
+                    </button>
                     <button type="button" class="dm-impersonate-btn" aria-pressed="false" title="대필 모드 꺼짐">
                         <i class="fa-solid fa-user"></i>
                     </button>
-                    <button type="button" class="dm-swap-btn ${isSwapOn ? 'active' : ''}" aria-pressed="${String(isSwapOn)}" title="${isSwapOn ? '역할 반전 켜짐' : '역할 반전 꺼짐'}">
+                    <button type="button" class="dm-swap-btn ${isSwapOn ? 'active' : ''}" aria-pressed="${String(isSwapOn)}" title="${isSwapOn ? '오버라이드(역할 반전) 켜짐' : '오버라이드(역할 반전) 꺼짐'}">
                         <i class="fa-solid fa-right-left"></i>
                     </button>
                 </div>
@@ -745,6 +739,7 @@ function setupCompactUIEventListeners() {
         setActiveScope($(this).data('scope'));
     });
 
+    compactUIPopup.find('.dm-auto-cycle-btn').on('click', toggleAutoCycleMode);
     compactUIPopup.find('.dm-impersonate-btn').on('click', toggleImpersonateMode);
 
     compactUIPopup.find('.dm-swap-btn').on('click', function() {
@@ -839,7 +834,7 @@ function setupCompactUIEventListeners() {
     
     // 외부 클릭시 닫기
     $(document).on('click.compactUI', (e) => {
-        if (!$(e.target).closest('.dm-compact--popup, .dm-quick-controls').length) {
+        if (!$(e.target).closest('.dm-compact--popup, .dm-compact--button').length) {
             closeCompactUIPopup();
             $(document).off('click.compactUI');
         }
@@ -868,48 +863,32 @@ function addCompactUIButton() {
     }
     
     // 기존 버튼 제거
-    if (quickControls) {
-        quickControls.remove();
-        quickControls = null;
+    if (compactUIButton) {
+        compactUIButton.remove();
         compactUIButton = null;
-        impersonateUIButton = null;
-        autoCycleUIButton = null;
     }
     
     const buttonHtml = `
-        <div class="dm-quick-controls" aria-label="Direction Manager 빠른 제어">
-            <div class="dm-quick-button dm-auto-cycle-button menu_button" role="button" aria-pressed="false" title="순환 대필 꺼짐">
-                <i class="fa-solid fa-rotate"></i>
-            </div>
-            <div class="dm-quick-button dm-impersonate-button menu_button" role="button" aria-pressed="false" title="대필 모드 꺼짐">
-                <i class="fa-solid fa-user"></i>
-            </div>
-            <div class="dm-quick-button dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager 오버라이드 - 전개 지시 꺼짐">
-                <i class="fa-solid fa-feather"></i>
-            </div>
+        <div class="dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager - 전개 지시 꺼짐">
+            <i class="fa-solid fa-feather"></i>
         </div>
     `;
     
-    quickControls = $(buttonHtml);
-    autoCycleUIButton = quickControls.find('.dm-auto-cycle-button');
-    impersonateUIButton = quickControls.find('.dm-impersonate-button');
-    compactUIButton = quickControls.find('.dm-compact--button');
-    $(ta).after(quickControls);
+    compactUIButton = $(buttonHtml);
+    $(ta).after(compactUIButton);
     
     // 확장 활성화 상태에 따라 버튼 표시/숨김
     const settings = extension_settings[extensionName];
     if (settings && settings.extensionEnabled) {
-        quickControls.show();
+        compactUIButton.show();
     } else {
-        quickControls.hide();
+        compactUIButton.hide();
     }
 
     updateCompactUIButtonState();
     
     // 클릭 이벤트
     compactUIButton.on('click', showCompactUIPopup);
-    impersonateUIButton.on('click', toggleImpersonateMode);
-    autoCycleUIButton.on('click', toggleAutoCycleMode);
 }
 
 let impersonateRequestInFlight = false;
@@ -1091,16 +1070,16 @@ function setupExtensionMenuEventHandlers() {
         
         if (isEnabled) {
             // 확장 활성화 시: 컴팩트 UI 버튼 표시 및 모든 플레이스홀더 적용
-            if (quickControls) {
-                quickControls.show();
+            if (compactUIButton) {
+                compactUIButton.show();
                 updateCompactUIButtonState();
             }
             applyAllPlaceholders();
         } else {
             // 확장 비활성화 시: 컴팩트 UI 버튼 숨김 및 모든 매크로 제거
-            if (quickControls) {
+            if (compactUIButton) {
                 updateCompactUIButtonState();
-                quickControls.hide();
+                compactUIButton.hide();
                 // 팝업이 열려있으면 닫기
                 if (compactUIPopup) {
                     closeCompactUIPopup();
