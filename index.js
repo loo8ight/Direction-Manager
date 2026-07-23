@@ -57,6 +57,8 @@ const compactPages = [
 ];
 
 const CHAT_METADATA_KEY = 'directionManager';
+const ACTIVE_DIRECTION_REQUEST_EVENT = 'directionManagerRequestActiveDirection';
+const WRITE_SUPPORTER_DIRECTION_MARKER = '[WRITE_SUPPORTER_DIRECTION_CONTEXT_INCLUDED]';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -172,6 +174,29 @@ function getScopePlaceholderStore(scope = getActiveScope(), create = false) {
 
 function getPlaceholderSettings(placeholderKey, scope = getActiveScope(), create = false) {
     return getScopePlaceholderStore(scope, create)[placeholderKey];
+}
+function getActiveDirectionSnapshot() {
+    const settings = extension_settings[extensionName];
+    if (!settings?.extensionEnabled) {
+        return null;
+    }
+
+    const scope = getActiveScope();
+    const direction = getPlaceholderSettings('direction', scope, false);
+    const content = String(direction?.content ?? '').trim();
+    if (!direction?.enabled || !content) {
+        return null;
+    }
+
+    return { scope, content };
+}
+
+function handleActiveDirectionRequest(event) {
+    if (!event?.detail || typeof event.detail !== 'object') {
+        return;
+    }
+
+    event.detail.result = getActiveDirectionSnapshot();
 }
 
 function getSwapState(scope = getActiveScope()) {
@@ -1152,9 +1177,17 @@ function setupExtensionMenuEventHandlers() {
 function injectDirectionPrompt(eventData) {
     const settings = extension_settings[extensionName];
     const placeholderStore = getScopePlaceholderStore();
+    const messages = eventData.chat || eventData.messages;
     
     // 확장이 비활성화되어 있으면 주입하지 않음
     if (!settings.extensionEnabled) {
+        return;
+    }
+
+    // WriteSupporter includes the active direction in its own reference block.
+    // Skip the ordinary RP direction injection when that marker is present.
+    if (Array.isArray(messages) && messages.some(message =>
+        String(message?.content ?? '').includes(WRITE_SUPPORTER_DIRECTION_MARKER))) {
         return;
     }
     
@@ -1184,9 +1217,6 @@ function injectDirectionPrompt(eventData) {
         .replace(/\{\{user\}\}/g, String(macroValues.user ?? ''));
     
     const depth = settings.promptDepth || 1;
-    
-    // 참고 파일 방식: eventData.chat 또는 eventData.messages 확인
-    let messages = eventData.chat || eventData.messages;
     
     if (messages && Array.isArray(messages)) {
         // system 메시지 생성
@@ -1226,6 +1256,7 @@ jQuery(async () => {
     // 대필 모드에서는 일반 메시지 전송보다 먼저 보내기 클릭을 가로챈다.
     document.addEventListener('keydown', handleImpersonateHotkey, true);
     document.addEventListener('click', handleImpersonateSendCapture, true);
+    document.addEventListener(ACTIVE_DIRECTION_REQUEST_EVENT, handleActiveDirectionRequest);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         autoCycleAwaitingUserSend = false;
