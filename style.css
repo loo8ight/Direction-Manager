@@ -85,12 +85,16 @@ div.dm-compact--button.dm-compact--directionOn:hover {
     bottom: 1px;
     width: 9px;
     height: 9px;
+    min-width: 0;
+    min-height: 0;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
     background-color: var(--SmartThemeBlurTintColor, #ffffff);
     color: var(--SmartThemeQuoteColor, #68a5d8);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+    padding: 0 !important;
+    line-height: 1 !important;
     pointer-events: none;
 }
 
@@ -104,9 +108,9 @@ div.dm-compact--button.dm-compact--directionOn:hover {
 
 .dm-compact--cycleIndicator > i,
 .dm-compact--swapIndicator > i {
-    color: inherit;
-    font-size: 5px;
-    line-height: 1;
+    color: var(--SmartThemeQuoteColor, #68a5d8) !important;
+    font-size: 5px !important;
+    line-height: 1 !important;
 }
 
 .dm-compact--button.dm-compact--autoCycleOn .dm-compact--cycleIndicator,
