@@ -78,22 +78,40 @@ div.dm-compact--button.dm-compact--directionOn:hover {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
 }
 
-.dm-compact--button.dm-compact--swapOn::before {
-    content: "⇄";
+.dm-compact--cycleIndicator,
+.dm-compact--swapIndicator {
+    display: none;
     position: absolute;
-    left: 1px;
-    bottom: 0;
-    min-width: 10px;
-    height: 10px;
-    padding: 0 1px;
-    border-radius: 999px;
+    bottom: 1px;
+    width: 9px;
+    height: 9px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
     background-color: var(--SmartThemeBlurTintColor, #ffffff);
     color: var(--SmartThemeQuoteColor, #68a5d8);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
-    font-size: 8px;
-    font-weight: 700;
-    line-height: 10px;
-    text-align: center;
+    pointer-events: none;
+}
+
+.dm-compact--cycleIndicator {
+    left: 1px;
+}
+
+.dm-compact--swapIndicator {
+    right: 1px;
+}
+
+.dm-compact--cycleIndicator > i,
+.dm-compact--swapIndicator > i {
+    color: inherit;
+    font-size: 5px;
+    line-height: 1;
+}
+
+.dm-compact--button.dm-compact--autoCycleOn .dm-compact--cycleIndicator,
+.dm-compact--button.dm-compact--swapOn .dm-compact--swapIndicator {
+    display: flex;
 }
 
 /* 컴팩트 UI 팝업 스타일 */

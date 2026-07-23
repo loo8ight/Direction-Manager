@@ -382,19 +382,21 @@ function updateCompactUIButtonState() {
     const settings = extension_settings[extensionName];
     const isDirectionOn = Boolean(settings?.extensionEnabled && getPlaceholderSettings('direction')?.enabled);
     const isImpersonateOn = Boolean(settings?.extensionEnabled && settings?.impersonateMode);
+    const isAutoCycleOn = Boolean(settings?.extensionEnabled && settings?.autoCycleMode);
     const isSwapOn = Boolean(settings?.extensionEnabled && getSwapState());
     const title = isImpersonateOn
-        ? 'Direction Manager - 대필 모드 켜짐'
-        : `Direction Manager 빠른 편집 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isSwapOn ? ', 역할 반전 켜짐' : ''}`;
+        ? `Direction Manager - 대필 모드 켜짐${isAutoCycleOn ? ', 순환 대필 켜짐' : ''}${isSwapOn ? ', 역할 반전 켜짐' : ''}`
+        : `Direction Manager 빠른 편집 - 전개 지시 ${isDirectionOn ? '켜짐' : '꺼짐'}${isAutoCycleOn ? ', 순환 대필 켜짐' : ''}${isSwapOn ? ', 역할 반전 켜짐' : ''}`;
 
     compactUIButton
         .toggleClass('dm-compact--directionOn', isDirectionOn)
         .toggleClass('dm-compact--impersonateOn', isImpersonateOn)
+        .toggleClass('dm-compact--autoCycleOn', isAutoCycleOn)
         .toggleClass('dm-compact--swapOn', isSwapOn)
         .attr('title', title)
-        .attr('aria-pressed', String(isDirectionOn || isImpersonateOn || isSwapOn));
+        .attr('aria-pressed', String(isDirectionOn || isImpersonateOn || isAutoCycleOn || isSwapOn));
 
-    compactUIButton.find('i')
+    compactUIButton.children('i')
         .toggleClass('fa-feather', !isImpersonateOn)
         .toggleClass('fa-user', isImpersonateOn);
 }
@@ -879,6 +881,12 @@ function addCompactUIButton() {
     const buttonHtml = `
         <div class="dm-compact--button menu_button" role="button" aria-pressed="false" title="Direction Manager - 전개 지시 꺼짐">
             <i class="fa-solid fa-feather"></i>
+            <span class="dm-compact--cycleIndicator" aria-hidden="true">
+                <i class="fa-solid fa-rotate"></i>
+            </span>
+            <span class="dm-compact--swapIndicator" aria-hidden="true">
+                <i class="fa-solid fa-right-left"></i>
+            </span>
         </div>
     `;
     
